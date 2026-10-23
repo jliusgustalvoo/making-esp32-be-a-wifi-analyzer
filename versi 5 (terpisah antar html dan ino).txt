@@ -1,0 +1,70 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <LittleFS.h> // Library ajaib pengakses memori Flash
+
+const char* ssid = "Ayam Kate"; 
+const char* password = "supangat10"; 
+
+WebServer server(80);
+
+void setup() {
+  Serial.begin(115200);
+
+  // =================================================================
+  // 1. MEMBUKA GUDANG MEMORI (LittleFS)
+  // =================================================================
+  // true di sini artinya: jika LittleFS belum pernah diformat, formatlah sekarang.
+  if (!LittleFS.begin(true)) {
+    Serial.println("Gagal memuat LittleFS. Pastikan folder 'data' sudah di-upload!");
+    return; // Berhenti di sini jika gagal
+  }
+  Serial.println("LittleFS berhasil dimuat.");
+
+  // =================================================================
+  // 2. MENGHUBUNGKAN JARINGAN
+  // =================================================================
+  WiFi.begin(ssid, password);
+  Serial.print("Menghubungkan WiFi");
+  
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+  }
+  
+  Serial.println("\nWiFi Terhubung!");
+  Serial.print("Buka IP ini di browser: ");
+  Serial.println(WiFi.localIP());
+
+  // =================================================================
+  // 3. POLISI LALU LINTAS (Routing Request)
+  // =================================================================
+  
+  // RUTE UTAMA ("/"): Jika ada yang meminta halaman web, langsung berikan 
+  // file index.html yang ada di dalam lemari arsip LittleFS.
+  server.serveStatic("/", LittleFS, "/index.html");
+
+  // RUTE DATA ("/scan"): Jika JavaScript meminta data (JSON)
+  server.on("/scan", []() {
+    int n = WiFi.scanNetworks(); 
+    
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ","; 
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+      json += "\"channel\":" + String(WiFi.channel(i)) + "}";
+    }
+    json += "]";
+
+    server.send(200, "application/json", json);
+  });
+
+  // Nyalakan server setelah semua rute disiapkan
+  server.begin();
+  Serial.println("Web Server Aktif!");
+}
+
+void loop() {
+  // Biarkan library yang mengatur antrean permintaan dari browser
+  server.handleClient(); 
+}

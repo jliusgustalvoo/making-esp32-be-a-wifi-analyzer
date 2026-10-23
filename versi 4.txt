@@ -1,0 +1,133 @@
+#include <WiFi.h>
+#include <WebServer.h> 
+
+const char* ssid = "Ayam Kate"; 
+const char* password = "supangat10"; 
+
+WebServer server(80); 
+
+// =================================================================
+// 1. KODE FRONTEND (HTML + CSS + JAVASCRIPT AUTO-REFRESH & SORTING)
+// =================================================================
+const char html_page[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 WiFi Analyzer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #202124; font-family: Arial, sans-serif; color: white; }
+        .container { width: 90%; max-width: 420px; margin: 40px auto; background: #303134; padding: 25px; border-radius: 15px; box-shadow: 0px 5px 15px rgba(0,0,0,0.5); }
+        h1 { text-align: center; margin-bottom: 20px; font-size: 24px;}
+        hr { margin-bottom: 20px; border: 1px solid #555; }
+        .info { margin-bottom: 20px; }
+        .info p { margin: 10px 0; font-size: 16px; }
+        .online { color: #00ff66; font-weight: bold; }
+        .wifi-card { background: #424242; padding: 15px; border-radius: 10px; margin-top: 15px; border-left: 5px solid #00ff66; }
+        .wifi-card strong { display: block; font-size: 18px; margin-bottom: 5px;}
+        .wifi-card span { font-size: 14px; color: #bbb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📶 ESP32 WiFi Analyzer</h1>
+        <hr>
+        <div class="info">
+            <p><strong>Status :</strong> <span class="online" id="status-teks">Online</span></p>
+            <p><strong>Total WiFi :</strong> <span id="jumlah-wifi">0</span></p>
+        </div>
+        
+        <div id="daftar-wifi">
+            <p style="text-align:center; margin-top:20px; color:#aaa;">Memulai pemindaian...</p>
+        </div>
+    </div>
+
+    <!-- DI SINILAH LOGIKA SORTING KITA TAMBAHKAN -->
+    <script>
+        function scanWifi() {
+            let teksStatus = document.getElementById("status-teks");
+            let teksJumlah = document.getElementById("jumlah-wifi");
+            let kotakDaftar = document.getElementById("daftar-wifi");
+
+            teksStatus.innerText = "Mencari...";
+            teksStatus.style.color = "yellow";
+
+            fetch('/scan')
+                .then(response => response.json())
+                .then(data => {
+                    teksStatus.innerText = "Online";
+                    teksStatus.style.color = "#00ff66";
+                    teksJumlah.innerText = data.length; 
+
+                    // ==========================================================
+                    // INI DIA KUNCI SORTINGNYA
+                    // Urutkan data berdasarkan nilai rssi (dari tertinggi/mendekati 0 ke terendah)
+                    // ==========================================================
+                    data.sort((a, b) => b.rssi - a.rssi);
+
+                    let hasilBongkar = "";
+                    for (let i = 0; i < data.length; i++) {
+                        hasilBongkar += `
+                        <div class="wifi-card">
+                            <strong>📶 ${data[i].ssid}</strong>
+                            <span>RSSI: ${data[i].rssi} dBm | Channel: ${data[i].channel}</span>
+                        </div>`;
+                    }
+                    kotakDaftar.innerHTML = hasilBongkar;
+                })
+                .catch(error => {
+                    teksStatus.innerText = "Error / Terputus";
+                    teksStatus.style.color = "red";
+                });
+        }
+
+        scanWifi(); 
+        setInterval(scanWifi, 5000); 
+    </script>
+</body>
+</html>
+)=====";
+
+
+// =================================================================
+// 2. SETUP (Berjalan satu kali)
+// =================================================================
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  
+  Serial.print("Menghubungkan WiFi");
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+  }
+  Serial.println("\nTerhubung! Buka IP ini di browser: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", []() {
+    server.send(200, "text/html", html_page); 
+  });
+
+  server.on("/scan", []() {
+    int n = WiFi.scanNetworks(); 
+    
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ","; 
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+      json += "\"channel\":" + String(WiFi.channel(i)) + "}";
+    }
+    json += "]";
+
+    server.send(200, "application/json", json);
+  });
+
+  server.begin();
+}
+
+void loop() {
+  server.handleClient(); 
+}

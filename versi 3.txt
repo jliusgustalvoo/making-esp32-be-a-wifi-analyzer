@@ -1,0 +1,152 @@
+#include <WiFi.h>
+#include <WebServer.h> // Library baru: Jauh lebih pintar mengatur rute
+
+const char* ssid = "Ayam Kate"; // Ganti dengan nama WiFi kamu
+const char* password = "PASSWORD_WIFI_KAMU"; // Ganti dengan password WiFi kamu
+
+WebServer server(80); // Menggantikan WiFiServer
+
+// =================================================================
+// 1. KODE FRONTEND (HTML + CSS + JAVASCRIPT)
+// =================================================================
+const char html_page[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 WiFi Analyzer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #202124; font-family: Arial, sans-serif; color: white; }
+        .container { width: 90%; max-width: 420px; margin: 40px auto; background: #303134; padding: 25px; border-radius: 15px; box-shadow: 0px 5px 15px rgba(0,0,0,0.5); }
+        h1 { text-align: center; margin-bottom: 20px; font-size: 24px;}
+        hr { margin-bottom: 20px; border: 1px solid #555; }
+        .info { margin-bottom: 20px; }
+        .info p { margin: 10px 0; font-size: 16px; }
+        .online { color: #00ff66; font-weight: bold; }
+        
+        button { width: 100%; padding: 15px; border: none; border-radius: 10px; background: #2196F3; color: white; font-size: 18px; cursor: pointer; font-weight:bold; }
+        button:hover { background: #1976D2; }
+        
+        /* Desain untuk daftar WiFi yang muncul nanti */
+        .wifi-card { background: #424242; padding: 15px; border-radius: 10px; margin-top: 15px; border-left: 5px solid #00ff66; }
+        .wifi-card strong { display: block; font-size: 18px; margin-bottom: 5px;}
+        .wifi-card span { font-size: 14px; color: #bbb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📶 ESP32 WiFi Analyzer</h1>
+        <hr>
+        <div class="info">
+            <p><strong>Status :</strong> <span class="online" id="status-teks">Online</span></p>
+            <p><strong>Total WiFi :</strong> <span id="jumlah-wifi">0</span></p>
+        </div>
+        
+        <!-- Saat tombol diklik, jalankan fungsi JavaScript scanWifi() -->
+        <button onclick="scanWifi()">Scan WiFi Sekarang</button>
+        
+        <!-- Di sinilah JavaScript akan menyuntikkan data hasil scan -->
+        <div id="daftar-wifi">
+            <p style="text-align:center; margin-top:20px; color:#aaa;">Belum ada data. Klik tombol di atas.</p>
+        </div>
+    </div>
+
+    <script>
+        // Ini adalah JAVASCRIPT: Logika yang berjalan di Browser (Laptop/HP)
+        function scanWifi() {
+            // 1. Ambil elemen yang ingin kita ubah
+            let teksStatus = document.getElementById("status-teks");
+            let teksJumlah = document.getElementById("jumlah-wifi");
+            let kotakDaftar = document.getElementById("daftar-wifi");
+
+            // 2. Ubah tampilan sejenak saat sedang loading
+            teksStatus.innerText = "Mencari Sinyal...";
+            teksStatus.style.color = "yellow";
+            kotakDaftar.innerHTML = "<p style='text-align:center; margin-top:20px;'>Tunggu sebentar ya...</p>";
+
+            // 3. Minta data ke rute "/scan" di ESP32 tanpa reload halaman (AJAX/Fetch)
+            fetch('/scan')
+                .then(response => response.json()) // Terima JSON dari ESP32
+                .then(data => {
+                    // 4. Data berhasil diterima! Kembalikan status jadi Online
+                    teksStatus.innerText = "Online";
+                    teksStatus.style.color = "#00ff66";
+                    teksJumlah.innerText = data.length; // Hitung jumlah WiFi
+
+                    // 5. Susun kotak (card) untuk setiap WiFi yang ditemukan
+                    let hasilBongkar = "";
+                    for (let i = 0; i < data.length; i++) {
+                        hasilBongkar += `
+                        <div class="wifi-card">
+                            <strong>📶 ${data[i].ssid}</strong>
+                            <span>RSSI: ${data[i].rssi} dBm | Channel: ${data[i].channel}</span>
+                        </div>`;
+                    }
+                    
+                    // 6. Suntikkan hasil susunan ke layar
+                    kotakDaftar.innerHTML = hasilBongkar;
+                })
+                .catch(error => {
+                    // Jika gagal atau ESP32 mati
+                    teksStatus.innerText = "Error / Terputus";
+                    teksStatus.style.color = "red";
+                });
+        }
+    </script>
+</body>
+</html>
+)=====";
+
+
+// =================================================================
+// 2. SETUP (Pengaturan Awal)
+// =================================================================
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  
+  Serial.print("Menghubungkan WiFi");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nTerhubung! Buka IP: " + WiFi.localIP().toString());
+
+  // POLISI LALU LINTAS 1: Jika browser meminta halaman utama ("/")
+  server.on("/", []() {
+    Serial.println("Browser meminta halaman HTML");
+    server.send(200, "text/html", html_page); // Kirim paket Raksasa HTML
+  });
+
+  // POLISI LALU LINTAS 2: Jika tombol di klik, browser akan meminta ke ("/scan")
+  server.on("/scan", []() {
+    Serial.println("Browser meminta data WiFi. Mulai Scanning...");
+    
+    int n = WiFi.scanNetworks(); // ESP32 mendeteksi WiFi sekitar
+    
+    // Kita buat format JSON secara manual agar bisa dibaca JavaScript
+    // Bentuk akhir JSON: [{"ssid":"Ayam Kate", "rssi":-35, "channel":4}]
+    String json = "[";
+    for (int i = 0; i < n; ++i) {
+      if (i > 0) json += ","; // Tambah koma pemisah antar data
+      json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+      json += "\"channel\":" + String(WiFi.channel(i)) + "}";
+    }
+    json += "]";
+
+    // Kirim data JSON kembali ke browser
+    server.send(200, "application/json", json);
+    Serial.println("Data JSON berhasil dikirim!");
+  });
+
+  server.begin(); // Nyalakan server
+}
+
+
+// =================================================================
+// 3. LOOP (Jauh lebih bersih dari Versi 2!)
+// =================================================================
+void loop() {
+  // Biarkan library WebServer yang mengurus semua logika kedatangan browser
+  server.handleClient(); 
+}
